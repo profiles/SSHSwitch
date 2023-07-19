@@ -1,0 +1,169 @@
+#!/bin/sh
+
+# external programs needed (not shell builtins) are
+#  file-cmds or coreutils(-bin): chown, cp, mkdir, rm, touch
+#  dpkg: dpkg-query
+# not (pre-)depending on them, just simply assuming, yeah shouldn't yeah yeah. Power users without these shouldn't need SSHswitch anyhow.
+
+[ "$1" = "install" -o "$1" = "upgrade" ] && {
+
+	# paths we use, certain custom dpkg builds overwrite some things but not this one
+	_ETC="${DPKG_ROOT:=}/etc/ssh"
+	_ETC="/${_ETC#*/}" # overcome the bash bug
+	[ -d "${_ETC}" ] || {
+		DPKG_ROOT="${JB_ROOT_PATH:-/var/jb}"
+		_ETC="${DPKG_ROOT}/etc/ssh"
+	}
+
+	# v.1.0 (SSHonCC >= 1.5): the default got changed from bootAsToggled into runOnBoot ie. the packagers of OpenSSH win instead of me (& the paranoid gang)
+	[ ! -f "${_ETC}/u.blanxd.sshswitch.bootastog" -a ! -f "${_ETC}/u.blanxd.sshswitch.notonboot" ] && {
+		[ "$1" = "upgrade" -a $# -ge 2 -a "${2%%.*}" = "0" -a ! -f "${_ETC}/u.blanxd.sshswitch.runonboot" ] && {
+			touch "${_ETC}/u.blanxd.sshswitch.bootastog" >/dev/null 2>&1
+		}
+		rm -f "${_ETC}/u.blanxd.sshswitch.runonboot" >/dev/null 2>&1
+	}
+
+	# for fresh installs the postinst makes the backups.
+	# if upgrading from v.1.0.x, doing what old prerm/postrm would do if it were removed/purged,
+	# so we get stock conf files for the backup (the mtimes won't be original but ok).
+	[ $# -lt 3 -o "${2#1.0}" = "${2}" ] || { # could be either "upgrade" or "install" in principle, with both "old-ver" and "new-ver" as additional args
+
+		# paths we use, need them not as full paths so certain custom dpkg builds won't assume things and try to overwrite them.
+		_UB1="usr"
+		_UB2="bin"
+		_SSW="${DPKG_ROOT}/${_UB1}/${_UB2}/SSHswitch"
+		_LL1="Library"
+		_LL2="LaunchDaemons"
+		_SPL="com.openssh.sshd.plist"
+		_LLP="${DPKG_ROOT}/${_LL1}/${_LL2}/${_SPL}"
+		_BDIR="${DPKG_ROOT}/var/mobile/Library/Preferences/u.blanxd.sshswitch/bckp"
+
+		[ -f "${_LLP}" -a -x "${_SSW}" ] || exit 0 # well, this isn't right, cannot work with this
+		[ -f "${_BDIR}/sshd_config" -a -f "${_BDIR}/${_SPL}" ] && exit 0 # this should not happen in production
+
+		# see if there were any customizations by the user
+		_custom_p="1" # "1" will denote Electra/Chimera, so everything is in sshd_config
+		_defprts=" 22 "
+
+		while read _str; do
+			[ "${_str#*<key>Sockets</key>}" = "${_str}" ] || {
+				_custom_p=","
+				break
+			}
+		done < "${_LLP}"
+
+		# on iOS11 the 1st was v.7.6 on Electra. Port 2222 appeared on procurs.us build 8.2-1.
+		# 2222 is not present in Elucubratus (v.8.4-2 by 2023-05).
+		[ "${_custom_p}" = "1" ] || dpkg-query -W openssh-global-listener >/dev/null 2>&1 || {
+			_vermaj=$(dpkg-query -f '${Version} ${Maintainer}' -W openssh-server 2>/dev/null)
+			[ -n "${_vermaj}" -a ${#_vermaj} -gt 2 ] || _vermaj=$(dpkg-query -f '${Version} ${Maintainer}' -W openssh 2>/dev/null)
+			[ "${_vermaj#*maintainer@sbdhi.com}" = "${_vermaj}" ] && {
+				_vermaj="${_vermaj%% *}"
+				_vermin="${_vermaj#*.}"
+				_vermaj="${_vermaj%%.*}"
+				case ${_vermaj} in (*[!0123456789]*) _vermaj=7 ;; esac # non-standard/production version string, let's assume default and forget
+				[ ${_vermaj} -lt 8 ] || {
+					_verbld="${_vermin#*-}"
+					[ "${_verbld}" = "${_vermin}" ] && _verbld=0
+					_vermin="${_vermin%%-*}"
+					_vermin="${_vermin%%.*}"
+					_vermin="${_vermin%%p*}"
+					case ${_vermin} in (*[!0123456789]*) _vermaj=7; _vermin=0 ;; esac # non-standard/production version string, let's assume default and forget
+					case ${_verbld} in (*[!0123456789]*) _verbld=0 ;; esac # non-standard/production version string, let's assume default and forget
+					test ${_vermaj} -gt 8 -o ${_vermin} -gt 2 -o ${_vermin} -eq 2 -a ${_verbld} -ge 1 2>/dev/null && {
+						_defprts=" 22 2222 "
+					}
+				}
+			}
+		}
+
+		_sss_vals=$(${_SSW} p awut 2>/dev/null)
+		_onoff=$?
+		[ ${_onoff} -lt 2 ] || exit 0
+		_defsets="ayes wyes uyes tno" # if default, 1.0.x output should be "22 ayes wyes uyes tno" (with the newlines) and maybe 2222 as well.
+		for _str in ${_sss_vals}; do
+			[ "${_defsets#*${_str}}" = "${_defsets}" ] && {
+				[ "${_defprts#* ${_str} }" = "${_defprts}" ] && {
+					_custom_s=1
+					[ "${_custom_p}" = "1" ] && break
+				}
+				[ "${_custom_p}" = "1" ] || case ${_str} in
+					(*[!0123456789]*) break ;;
+					(*) _custom_p="${_custom_p}${_str}," ;;
+				esac
+			}
+		done
+		for _str in ${_defprts}; do
+			_defport="${_defport},${_str}"
+			[ ! "${_custom_p}" = "1" -a "${_custom_p#*,${_str},}" = "${_custom_p}" ] && _custom_s=1
+		done
+		_custom_p="${_custom_p#,}"
+		_custom_p="${_custom_p%,}"
+		_defport="${_defport#,}"
+
+		[ -z "${_custom_s}" ] || {
+
+			mkdir -p "${_BDIR}" >/dev/null 2>&1
+			[ -d "${_BDIR}" ] && {
+
+				# in postrm ver <= 1.0.1 there was gnu style `sed` usage without a bsd fallback so when
+				# uninstalling SSHswitch, the things probably never got reset on Electra/Chimera (my bug).
+				# Procurs.us and Elucubratus have the GNU one.
+				[ -f "${_BDIR}/sshd_config" ] || {
+					while read _str; do
+						if [ ! "${_str#Port }" = "${_str}" ]; then
+							[ -n "${_dp}" ] || {
+								echo "#Port 22" >> "${_BDIR}/sshd_config"
+								_dp=1
+							}
+						elif [ ! "${_str#PermitRootLogin }" = "${_str}" ]; then
+							[ -n "${_da}" ] || {
+								echo "PermitRootLogin yes" >> "${_BDIR}/sshd_config"
+								_da=1
+							}
+						elif [ ! "${_str#PasswordAuthentication }" = "${_str}" ]; then
+							[ -n "${_dw}" ] || {
+								echo "#PasswordAuthentication yes" >> "${_BDIR}/sshd_config"
+								_dw=1
+							}
+						elif [ ! "${_str#PubkeyAuthentication }" = "${_str}" ]; then
+							[ -n "${_du}" ] || {
+								echo "#PubkeyAuthentication yes" >> "${_BDIR}/sshd_config"
+								_du=1
+							}
+						elif [ "${_str#AuthenticationMethods}" = "${_str}" ]; then
+							echo "${_str}" >> "${_BDIR}/sshd_config"
+						fi
+					done < "${_ETC}/sshd_config"
+				}
+
+				[ -f "${_BDIR}/${_SPL}" ] || {
+
+					[ -z "${_custom_p}" -o "${_custom_p}" = "${_defport}" -o "${_custom_p}" = "1" ] || {
+						${_SSW} on ${_defport} >/dev/null 2>&1
+					}
+
+					cp -p "${_LLP}" "${_BDIR}/${_SPL}" >/dev/null 2>&1
+
+					[ -z "${_custom_p}" -o "${_custom_p}" = "${_defport}" -o "${_custom_p}" = "1" ] || {
+
+						[ ${_onoff} -eq 1 ] || _onoff="on"
+						[ "${_onoff}" = "on" ] || _onoff="off"
+
+						${_SSW} ${_onoff} ${_custom_p} >/dev/null 2>&1
+
+						echo 
+						echo "SSHswitch changed its backup system, please recheck your custom ssh settings"
+						echo 
+					}
+				}
+
+				rm -f "${_LLP}.backup_before_u.blanxd.SSHswitch" >/dev/null 2>&1
+				chown -R mobile:mobile "${_BDIR%/bckp}" >/dev/null 2>&1
+			}
+		}
+	}
+
+}
+
+exit 0

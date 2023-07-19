@@ -1,0 +1,45 @@
+\input texinfo
+@documentencoding UTF-8
+$for(header-includes)$
+$header-includes$
+$endfor$
+
+$if(strikeout)$
+@macro textstrikeout{text}
+~~\text\~~
+@end macro
+
+$endif$
+@ifinfo
+@dircategory Interface/command-line
+@direntry
+* SSHswitch: (SSHswitch).   A setuid OpenSSH configurator
+@end direntry
+
+@end ifinfo
+@ifnottex
+@paragraphindent 0
+@end ifnottex
+$if(titlepage)$
+@titlepage
+@title $title$
+$for(author)$
+@author $author$
+$endfor$
+$if(date)$
+$date$
+$endif$
+@end titlepage
+
+$endif$
+$for(include-before)$
+$include-before$
+
+$endfor$
+$body$
+$for(include-after)$
+
+$include-after$
+$endfor$
+
+@bye

@@ -1,0 +1,14 @@
+Package: u.blanxd.sshswitch
+Name: SSHswitch
+Author: BlanxdH <blanxd.h@gmail.com>
+Depends: cy+cpu.arm64 | firmware (>= 11), openssh-server (>= 6.2) | openssh (>= 6.2)
+Breaks: u.blanxd.sshoncc (<= 1.4.0)
+Replaces: u.blanxd.sshoncc (<= 1.4.0)
+Conflicts: u.blanxd.opensshport (<< 1.0~b3)
+Section: Utilities
+Version: 1.1.0
+Architecture: iphoneos-arm
+Description: CLI tool for changing OpenSSH settings
+Maintainer: BlanxdH
+dev: blanxd
+tag: purpose::console, role::hacker

@@ -1,0 +1,4 @@
+interest-noawait /etc/ssh/sshd_config
+interest-noawait /var/jb/etc/ssh/sshd_config
+interest-noawait /Library/LaunchDaemons/com.openssh.sshd.plist
+interest-noawait /var/jb/Library/LaunchDaemons/com.openssh.sshd.plist

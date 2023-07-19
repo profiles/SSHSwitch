@@ -1,0 +1,30 @@
+#!/bin/sh
+
+# external programs needed (not shell builtins) are
+#  file-cmds or coreutils(-bin): rm
+#  texinfo(optional): install-info
+# not (pre-)depending on them, just simply assuming, yeah shouldn't yeah yeah. Power users without these shouldn't need SSHswitch anyhow.
+
+[ "$1" = "remove" -o "$1" = "purge" -o "$1" = "upgrade" ] && {
+
+	# paths we use, need them not as full paths so certain custom dpkg builds won't assume things and try to overwrite them.
+	_UB1="usr"
+	_USH="${DPKG_ROOT:-}/${_UB1}/share"
+	[ -d "${_USH}" ] || {
+		DPKG_ROOT="${JB_ROOT_PATH:-/var/jb}"
+		_USH="${DPKG_ROOT}/${_UB1}/share"
+	}
+	[ -f "${_USH}/info/dir" ] || exit 0
+
+	install-info --dir-file="${_USH}/info/dir" --info-file="${_USH}/info/SSHswitch.info" --delete >/dev/null 2>&1
+
+	_dir=""
+	while read _l; do 
+		[ -z "${_l}" ] || _dir="${_l}"
+	done < "${_USH}/info/dir"
+	[ "${_dir}" = "${_dir% Menu:}" ] || {
+		rm -f "${_USH}/info/dir" >/dev/null 2>&1 || true
+	}
+
+}
+exit 0

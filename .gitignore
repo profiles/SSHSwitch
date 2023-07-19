@@ -1,0 +1,6 @@
+.DS_Store
+.theos
+/doc/output
+/layout/usr
+/layout/var
+/packages

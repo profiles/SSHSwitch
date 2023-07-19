@@ -1,0 +1,206 @@
+#!/bin/sh
+
+# external programs needed (not shell builtins) are
+#  file-cmds or coreutils(-bin): chmod, chown, cp, mkdir, mktemp, mv, rm
+#  dpkg: dpkg-query
+#  (optional)texinfo: install-info
+# not (pre-)depending on them, just simply assuming, yeah shouldn't yeah yeah. Power users without these shouldn't need SSHswitch anyhow.
+
+_SW="SSHswitch"
+_ID="u.blanxd.sshswitch" # ${DPKG_MAINTSCRIPT_PACKAGE}
+
+# paths we use, need them not as full paths so certain custom dpkg builds won't assume things and try to overwrite them.
+_UB1="usr"
+_UB2="bin"
+_SSW="${DPKG_ROOT:=}/${_UB1}/${_UB2}/${_SW}" # if sh is bash 5.0, it may run into a word expansion bug (see bash-5.1-alpha changes 1. ppp)
+_SSW="/${_SSW#*/}" # overcome the bash bug
+[ -f "${_SSW}" ] || {
+	DPKG_ROOT="${JB_ROOT_PATH:-/var/jb}"
+	_SSW="${DPKG_ROOT}/${_UB1}/${_UB2}/${_SW}"
+}
+_LL1="Library"
+_LL2="LaunchDaemons"
+_SPL="com.openssh.sshd.plist"
+_LLP="${DPKG_ROOT}/${_LL1}/${_LL2}/${_SPL}"
+_USH="${DPKG_ROOT}/${_UB1}/share"
+
+_VMO="/var/mobile"
+_PDIR="${_VMO}/Library/Preferences/${_ID}"
+_BDIR="${DPKG_ROOT}${_PDIR}/bckp"
+
+# pre-make the dirs. The prefs are also being handled runtime, but not our OpenSSH conf backup stuff.
+mkdir -p "${_BDIR}" >/dev/null 2>&1
+mkdir -p "${_PDIR}" >/dev/null 2>&1
+
+# learn what we have
+_curverl=$(dpkg-query -f '${Version}' -W openssh-global-listener 2>/dev/null)
+_curvers=$(dpkg-query -f '${Version}' -W openssh-server 2>/dev/null)
+[ -n "${_curvers}" ] || _curvero=$(dpkg-query -f '${Version}' -W openssh 2>/dev/null)
+[ -n "${_curvers}" -o -n "${_curvero}" ] || {
+	# one of them should be present. Ok if calling dpkg-query errors, but else how come we're being called at all?
+	_curvero=0
+}
+_applyprefs=0
+
+if [ "${1}" = "triggered" ]; then
+	[ -d "${_BDIR}" ] && {
+
+		read _oldverl 2>/dev/null < "${_BDIR}/verl" || _oldverl=""
+		read _oldvers 2>/dev/null < "${_BDIR}/vers" || _oldvers=""
+		[ -n "${_oldvers}" ] || read _oldvero 2>/dev/null < "${_BDIR}/vero" || _oldvero=""
+
+		for _trig in ${2}; do
+			[ "${_trig}" = "${_trig%Library/LaunchDaemons/${_SPL}}" ] || {
+				# for the plist it's either listener or server or openssh, in this order, highest prio 1st
+				[ -f "${_BDIR}/${_SPL}" -a "${_oldverl:-${_oldvers:-${_oldvero:-a}}}" = "${_curverl:-${_curvers:-${_curvero:-b}}}" ] || {
+					cp -f -p "${_LLP}" "${_BDIR}/${_SPL}" >/dev/null 2>&1 && {
+						[ ${_applyprefs} -ge 8 ] || echo 
+						echo "${_SW} backed up ${_SPL}"
+						_applyprefs=$((_applyprefs|8))
+					}
+				}
+				_applyprefs=$((_applyprefs+1))
+			}
+			[ "${_trig}" = "${_trig%etc/ssh/sshd_config}" ] || {
+				# for sshd_config it's either server or openssh, in this order, highest prio 1st
+				[ -f "${_BDIR}/sshd_config" -a "${_oldvers:-${_oldvero:-a}}" = "${_curvers:-${_curvero:-b}}" ] || {
+					if [ -f "${DPKG_ROOT}/etc/ssh/sshd_config.dpkg-dist" ]; then
+						cp -f -p "${DPKG_ROOT}/etc/ssh/sshd_config.dpkg-dist" "${_BDIR}/sshd_config" >/dev/null 2>&1
+					elif [ -f "${DPKG_ROOT}/etc/ssh/sshd_config.dpkg-new" ]; then
+						cp -f -p "${DPKG_ROOT}/etc/ssh/sshd_config.dpkg-new" "${_BDIR}/sshd_config" >/dev/null 2>&1
+					else
+						cp -f -p "${DPKG_ROOT}/etc/ssh/sshd_config" "${_BDIR}/sshd_config" >/dev/null 2>&1
+					fi
+					[ $? -eq 0 ] && {
+						[ ${_applyprefs} -ge 8 ] || echo 
+						echo "${_SW} backed up sshd_config"
+						_applyprefs=$((_applyprefs|8))
+					}
+				}
+				_applyprefs=$((_applyprefs+2))
+			}
+		done
+	}
+
+elif [ "${1}" = "configure" ]; then
+
+	chown 0:0 "${_SSW}" || exit 1
+	chmod 6755 "${_SSW}" || exit 1
+
+	_applyprefs=4
+	_VMD="${DPKG_ROOT}${_VMO}/Documents"
+
+	# possible settings files from versions before the breakup, SSHonCC (<< 1.5) | SSHswitch (<< 1.0)
+	rm -f "${DPKG_ROOT}/etc/ssh/${_ID}.isnotsshd" >/dev/null 2>&1
+	rm -f "${DPKG_ROOT}/etc/ssh/${_ID}.isindsshd" >/dev/null 2>&1
+
+	# documentation, cli
+	install-info --dir-file="${_USH}/info/dir" --info-file="${_USH}/info/${_SW}.info" >/dev/null 2>&1
+
+	# documentation, this dir and its contents should be owned by mobile. Just by principle (anyone can anyway do anything if jbn). And the next step can use simply `cp -p'.
+	chown -R mobile:mobile "${_VMD}/${_SW}-doc" >/dev/null 2>&1
+	# in case of rootless, maybe it's the 1st thing created in Documents
+	[ "$(echo "${_VMD}"/*)" = "${_VMD}/${_SW}-doc" ] && chown mobile:mobile "${_VMD}" >/dev/null 2>&1
+
+	# documentation, Files.app : "On My iPhone/iPad"
+	_pltmp=$(mktemp 2>/dev/null)
+	[ -z "${_pltmp}" ] || {
+		for _fps in "${_VMO}"/Containers/Shared/AppGroup/*"/File Provider Storage"; do
+			# A binary plist has the plain string in it (if it does), but for `read` to process it there must be a newline present some time later, let's add it.
+			# The Bash `read` may detect special bytes in the offset table or the trailer and return without our last newline, thus discarding the chunk. So let's use \0 instead of \n, there are several in the trailer.
+			cp "${_fps%File Provider Storage}.com.apple.mobile_container_manager.metadata.plist" "${_pltmp}" >/dev/null 2>&1 && \
+			echo >> "${_pltmp}" 2>/dev/null && while read -d "" _line 2>/dev/null || read _line; do
+				[ "${_line}" = "${_line#*group.com.apple.FileProvider.LocalStorage}" ] || {
+					_omi="${_fps}"
+					break 2
+				}
+			done < "${_pltmp}"
+		done
+		rm -f "${_pltmp}" >/dev/null 2>&1
+	}
+	[ -z "${_omi}" ] || {
+		rm -rf "${_omi}/${_SW}-doc" >/dev/null 2>&1
+		cp -fRp "${_VMD}/${_SW}-doc" "${_omi}" 2>/dev/null && {
+			printf "\n%s documentation is now (also) in Files.app : On My iPhone/iPad\n" "${_SW}"
+			_applyprefs=$((_applyprefs|8))
+
+		}
+	}
+
+	# backups
+	[ -d "${_BDIR}" ] && {
+		# they should exist if upgrading, either past v.1.1.0 or by preinst if we're upgrading from v.1.0.x
+		[ -f "${_BDIR}/${_SPL}" ] || {
+			if [ -f "${_LLP}.backup_before_u.blanxd.${_SW}" ]; then
+				mv "${_LLP}.backup_before_u.blanxd.${_SW}" "${_BDIR}/${_SPL}" 2>/dev/null
+			else
+				cp -f -p "${_LLP}" "${_BDIR}/${_SPL}" >/dev/null 2>&1
+			fi
+		}
+		[ -f "${_BDIR}/sshd_config" ] || {
+			cp -f -p "${DPKG_ROOT}/etc/ssh/sshd_config" "${_BDIR}/sshd_config" >/dev/null 2>&1
+		}
+		printf "Here are some info files and the original\nconf files of OpenSSH. These are managed by the\nmaintainer scripts of %s when\nthe package is installed/upgraded/uninstalled\nand when OpenSSH is reinstalled or upgraded.\n" "${_ID}" > "${_BDIR}/README.txt" 2>/dev/null
+	}
+
+	# what is all this?
+	[ -d "${_PDIR}" ] && \
+		printf "The prefs file here should not be manually edited.\nEach line in it represents parameters for %s\n(and/or settings for some OpenSSH toggle tweaks).\n" "${_SW}" > "${_PDIR}/README.txt" 2>/dev/null
+
+fi
+
+# anchors for triggered runs
+[ -d "${_BDIR}" ] && {
+	if [ -z "${_curverl}" ]; then
+		rm -f "${_BDIR}/verl" >/dev/null 2>&1
+	else
+		echo "${_curverl}" > "${_BDIR}/verl" 2>/dev/null
+	fi
+	if [ -z "${_curvers}" ]; then
+		rm -f "${_BDIR}/vers" >/dev/null 2>&1
+	else
+		echo "${_curvers}" > "${_BDIR}/vers" 2>/dev/null
+	fi
+	if [ -z "${_curvero}" ]; then
+		rm -f "${_BDIR}/vero" >/dev/null 2>&1
+	else
+		echo "${_curvero}" > "${_BDIR}/vero" 2>/dev/null
+	fi
+}
+
+chown -R mobile:mobile "${_PDIR}" "${_BDIR%/bckp}" >/dev/null 2>&1
+rm -f "${_LLP}.backup_before_u.blanxd.${_SW}" >/dev/null 2>&1
+
+# apply user prefs
+[ ${_applyprefs} -gt 0 -a -f "${_PDIR}/prefs" ] && {
+
+	_prefs=""
+	_nl=$(printf '\n ')
+	while read _pline; do
+		[ "${_prefs}" = "${_prefs#*${_pline}${_nl% }}" ] && {
+			# the 1st one wins. shouldn't be relevant unless manually tinkered with.
+			_prefs="${_prefs}${_pline}${_nl% }"
+		}
+	done < "${_PDIR}"/prefs
+
+	[ -z "${_prefs}" ] || {
+		if [ ${_applyprefs} -gt 8 ]; then
+			_applyprefs=$((_applyprefs-8))
+		else
+			echo 
+		fi
+		echo -n "${_SW} "
+		if [ ${_applyprefs} -ge 4 ]; then echo -n "apply"
+		else echo -n "restor"; fi
+		echo "ing custom ssh settings"
+		echo 
+		while read _pline; do
+			${_SSW} ${_pline} >/dev/null 2>&1
+		done <<-EOF
+			${_prefs}
+		EOF
+	}
+
+}
+
+exit 0

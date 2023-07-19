@@ -1,0 +1,69 @@
+#!/bin/sh
+
+# external programs needed (not shell builtins) are
+#  file-cmds or coreutils(-bin): chown, mktemp, mv, rm
+#  bootstrap or launchctl: launchctl
+# not (pre-)depending on them, just simply assuming, yeah shouldn't yeah yeah. Power users without these shouldn't need SSHswitch anyhow.
+
+_ETC="${DPKG_ROOT:=}/etc/ssh"
+_ETC="/${_ETC#*/}" # overcome the bash bug
+[ -d "${_ETC}" ] || {
+	DPKG_ROOT="${JB_ROOT_PATH:-/var/jb}"
+	_ETC="${DPKG_ROOT}/etc/ssh"
+}
+_ETC="${_ETC}/sshd_config"
+
+if [ -f "${_ETC}.b" -a ! -f "${_ETC}" ]; then
+	mv -f "${_ETC}.b" "${_ETC}" >/dev/null 2>&1
+else
+	rm -f "${_ETC}.b" >/dev/null 2>&1
+fi
+
+[ "$1" = "upgrade" -a ! "$2" = "${2#1.0}" ] && _down=1
+
+[ "$1" = "remove" -o "$1" = "purge" -o -n "${_down}" ] && {
+
+	# del doc from Files.app : "On My iPhone/iPad"
+	_pltmp=$(mktemp 2>/dev/null)
+	[ -z "${_pltmp}" ] || {
+		for _fps in /var/mobile/Containers/Shared/AppGroup/*"/File Provider Storage"; do
+			cp "${_fps%File Provider Storage}.com.apple.mobile_container_manager.metadata.plist" "${_pltmp}" >/dev/null 2>&1 && \
+			echo >> "${_pltmp}" 2>/dev/null && while read -d "" _line 2>/dev/null || read _line; do
+				[ "${_line}" = "${_line#*group.com.apple.FileProvider.LocalStorage}" ] || {
+					rm -rf "${_fps}/SSHswitch-doc"
+					break 2
+				}
+			done < "${_pltmp}"
+		done
+		rm -f "${_pltmp}" >/dev/null 2>&1
+	}	
+
+	# restore conf from backup
+	_BDIR="${DPKG_ROOT}/var/mobile/Library/Preferences/u.blanxd.sshswitch/bckp"
+	_LL1="Library"
+	_LL2="LaunchDaemons"
+	_SPL="com.openssh.sshd.plist"
+	_LLP="${DPKG_ROOT}/${_LL1}/${_LL2}/${_SPL}"
+
+	_OK="OK"
+	[ -f "${_BDIR}/sshd_config" ] && {
+		mv -f "${_BDIR}/sshd_config" "${_ETC}" 2>/dev/null || _OK="FAILED"
+		[ "${_OK}" = "OK" ] && { chown 0:0 "${_ETC}" >/dev/null 2>&1 || _OK="FAILED chown 0:0"; }
+		echo "RESTORING sshd_config from backup: ${_OK}"
+	}
+
+	_OK="OK"
+	[ -f "${_BDIR}/${_SPL}" ] && {
+		mv -f "${_BDIR}/${_SPL}" "${_LLP}" 2>/dev/null || _OK="FAILED"
+		[ "${_OK}" = "OK" ] && { chown 0:0 "${_LLP}" >/dev/null 2>&1 || _OK="FAILED chown 0:0"; }
+		echo "RESTORING ${_SPL} from backup: ${_OK}"
+	}
+
+	echo "RESTARTING sshd"
+	launchctl unload "${_LLP}" >/dev/null 2>&1
+	launchctl load -w "${_LLP}" >/dev/null 2>&1
+
+	[ -z "${_down}" ] || printf "\nif you are downgrading SSHswitch, please recheck your ssh settings\n\n"
+
+}
+exit 0
