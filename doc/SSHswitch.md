@@ -131,7 +131,7 @@ Optional additional arguments after _on_/_off_:
    
 **k** | **k1** | **k0** | **kyes** | **kno** | **k\-**  
 **l** | **l1** | **l0** | **lyes** | **lno** | **l\-**  
-  this is not an OpenSSH setting. It makes us kick (or not) all possible (incoming) ssh/sftp/scp sessions off the server, even if the subcommand is _on_. They are opposites, _k_ means Kick'Em nad _l_ means Let'EmLinger. This option also overrides the _letEmLinger_/_kickEm_ tweak preference setting (see below). In v.1.0.x this was the 5th possible toggle after _on_/_off_, only accepting 1/0 (and the 4th in some earlier versions of SSHonCC).  
+  this is not an OpenSSH setting. It makes us kick (or not) all possible (incoming) ssh/sftp/scp sessions off the server, even if the subcommand is _on_. They are opposites, _k_ means Kick'Em and _l_ means Let'EmLinger. This option also overrides the _letEmLinger_/_kickEm_ tweak preference setting (see below). In v.1.0.x this was the 5th possible toggle after _on_/_off_, only accepting 1/0 (and the 4th in some earlier versions of SSHonCC).  
    
    
 If both the _w_ (withPassword) and _u_ (usingKey) options are given 0|no then this doesn\'t make much sense, either Password or PubKey authentication should be allowed, else it\'s a lockout (unless using some more advanced authentication schemes, which are possible, but I\'m not sure if anyone uses those in iOS). So this tool instead reverts these to \`yes', and additionally makes the server require both, *t*woFactor (using the AuthenticationMethods keyword in sshd\_config). Ie. a user must have their pubkey in the authorized\_keys file, and in addition they must provide the password when logging in. Ie. Extra Secure :)

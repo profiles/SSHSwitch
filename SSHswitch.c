@@ -665,7 +665,7 @@ prefs_oo_setone(char * pref, char * val, char * from){
 //  the `ports' and `max_ports' arguments must be sane things (else could be NULL,0),
 // For any OpenSSH setting, -1 means no preference ie. use the conf/plist values etc,
 //  we're not deciding any defaults here (g_pref_oo is "-").
-// Input (the 1st arg) is a letter, almost like the subcommands. The 2nd arg must denote which way
+// Query (the 1st arg) is a letter, almost like the subcommands. The 2nd arg must denote which way
 //  we're currently being run (for opening the prefs file correctly).
 static int8_t
 prefs_get_any( char * pref, _Bool get_set, uint16_t *ports, size_t max_ports ){
@@ -763,6 +763,7 @@ prefs_get_any( char * pref, _Bool get_set, uint16_t *ports, size_t max_ports ){
 
 	} // while ( fgets(istr,65,ff_tweakpref) != NULL ){
 
+	// defaults
 	if ( g_pref_kl[0]=='0' ){
 		if ( is_file(fp_letemling) ){ // backward compa
 			g_pref_kl[0] = 'l';
@@ -2211,6 +2212,7 @@ int main(int argc, char *argv[], char * envp[]) {
 	} else
 
 	// launchctl settings
+#pragma mark Startup setup
 	if ( strchr("rnb",argv[1][0]) != NULL ){ // ?? can there be an argv[1] consisting of only a '\0'? (in which case this would always be true)
 		int8_t prefset,
 			ono = prefs_get("o",1); // could be -1 if no ssh setting has ever been changed with this tool
@@ -2240,37 +2242,22 @@ int main(int argc, char *argv[], char * envp[]) {
 				return finish_cleanup( 0 ,NULL,NULL,NULL);
 			}
 
-			if ( status==0 ){ // not running
-				swoo = switch_onoff(1);
-				if ( swoo > 0 ){
-					return finish_cleanup(swoo,NULL,NULL,NULL);
-				}
-			} else {
-				if ( (prefget = prefs_get("n",1)) <0 )
-					return finish_cleanup( -prefget ,NULL,NULL,NULL);
-				if ( prefget==1 ){ // running, and notonboot
-					swoo = switch_onoff(0);
-					if ( swoo > 0 ){
-						return finish_cleanup(swoo,NULL,NULL,NULL);
-					}
-				}
-			}
+			// Need to get to `load -w' / `unload -F'.
+			// - if not running and bootastog (was unload -w), need to load -w, unload -F
+			// - if running and bootastog (was load -w), good
+			// - if not running and notonboot (was unload -w), need to load -w, unload -F
+			// - if running and notonboot (was load -F), need to unload -*, load -w
 
-			if ( (prefset = prefs_set("r")) >0 ){
-				return finish_cleanup( prefset ,NULL,NULL,NULL);
-			}
-			if ( (prefget = prefs_get("b",1)) <0 )
+			if ( (prefget = prefs_get("n",1)) <0 )
 				return finish_cleanup( -prefget ,NULL,NULL,NULL);
-			if ( prefget==1 && status != 0 ){ // running, and bootastog
-				return finish_cleanup( 0 ,NULL,NULL,NULL);
-			}
+			// now prefget==1 is notonboot, prefget==0 is bootastog
 
-			// (bootastog && not running) or notonboot
-			if ( status==0 ){ // not running
-				return finish_cleanup( switch_onoff(0) ,NULL,NULL,NULL); // switch off again
-			}
-			// notonboot and running
-			return finish_cleanup( switch_onoff(1) ,NULL,NULL,NULL); // switch on again
+			if ( (prefset = prefs_set("r")) >0 )
+				return finish_cleanup( prefset ,NULL,NULL,NULL);
+
+			if ( prefget==0 && status != 0 ) // running, was bootastog
+				return finish_cleanup( 0 ,NULL,NULL,NULL);
+			// else go for the restart/restop
 
 		} else // if ( argv[1][0] == 'r' ){
 #pragma mark subcommand notOnBoot
@@ -2283,34 +2270,22 @@ int main(int argc, char *argv[], char * envp[]) {
 				return finish_cleanup( 0 ,NULL,NULL,NULL);
 			}
 
-			prefget = prefs_get("b",1);
-			if ( prefget<0 )
+			// Need to get to `load -F' / `unload -w'.
+			// - if not running and bootastog (was unload -w), good
+			// - if running and bootastog (was load -w), need to unload -w, load -F
+			// - if not running and runonboot (was unload -F), need to load -*, unload -w
+			// - if running and runonboot (was load -w), need to unload -w, load -F
+
+			if ( (prefget = prefs_get("b",1)) <0 )
 				return finish_cleanup( -prefget ,NULL,NULL,NULL);
+			// now prefget==1 is bootastog, prefget==0 is runonboot
 
-			if ( status==1 ){ // running
-				swoo = switch_onoff(0); // turn off (hard)
-				if ( swoo > 0 ){
-					return finish_cleanup(swoo,NULL,NULL,NULL);
-				}
-			} else if ( prefget==0 ){ // not running & was runonboot
-				swoo = switch_onoff(1); // turn on (hard)
-				if ( swoo > 0 ){
-					return finish_cleanup(swoo,NULL,NULL,NULL);
-				}
-			}
-
-			if ( (prefset = prefs_set("n")) >0 ){
+			if ( (prefset = prefs_set("n")) >0 )
 				return finish_cleanup( prefset ,NULL,NULL,NULL);
-			}
-			if ( prefget==1 && status==0 ){ // was bootastog and wasn't running
-				return finish_cleanup( 0 ,NULL,NULL,NULL);
-			}
-			if ( status == 1 ){ // was running
-				return finish_cleanup( switch_onoff(1) ,NULL,NULL,NULL); // turn on (soft)
-			}
 
-			// must have been runonboot && not running
-			return finish_cleanup( switch_onoff(0) ,NULL,NULL,NULL); // turn on (hard)
+			if ( prefget==1 && status==0 ) // not running, was bootastog
+				return finish_cleanup( 0 ,NULL,NULL,NULL);
+			// else go for the restart/restop
 
 		} else // if ( argv[1][0] == 'n' ){
 #pragma mark subcommand bootAsToggled
@@ -2323,42 +2298,42 @@ int main(int argc, char *argv[], char * envp[]) {
 				return finish_cleanup( 0 ,NULL,NULL,NULL);
 			}
 
+			// Need to get to `load -w' / `unload -w'.
+			// - if not running and notonboot (was unload -w), good
+			// - if running and notonboot (was load -F), need to unload -*, load -w
+			// - if not running and runonboot (was unload -F), need to load -*, unload -w
+			// - if running and runonboot (was load -w), good
+
 			if ( (prefget = prefs_get("n",1)) <0 )
 				return finish_cleanup( -prefget ,NULL,NULL,NULL);
+			// now prefget==1 is notonboot, prefget==0 is runonboot
 
-			if ( prefget==1 ){
-				if ( status==1 ){
-					swoo = switch_onoff(0); // turn off (hard)
-					if ( swoo > 0 ){
-						return finish_cleanup( swoo ,NULL,NULL,NULL);
-					}
-				}
-			} else if ( status==0 ){ // runonboot && not running
-				swoo = switch_onoff(1); // turn on (hard)
-				if ( swoo > 0 ){
-					return swoo;
-				}
-			}
-
-			if ( (prefset = prefs_set("b")) >1 ){
+			if ( (prefset = prefs_set("b")) >0 )
 				return finish_cleanup( prefset ,NULL,NULL,NULL);
-			}
-			if ( status != prefget ){
-				return finish_cleanup( 0 ,NULL,NULL,NULL);
-			}
 
-			// must be either ( status==1 && noto==1 ) || ( status==0 && noto==0 )
-			return finish_cleanup( switch_onoff( prefget==1 ? 1 : 0 ) ,NULL,NULL,NULL);
+			if (
+				( prefget==1 && status==0 ) // not running and notonboot
+				||
+				( prefget==0 && status!=0 ) // running and runonboot
+			) return finish_cleanup( 0 ,NULL,NULL,NULL);
+			// else go for the restart/restop
 
 		} // if ( argv[1][0] == 'b' ){
+
+		swoo = switch_onoff( status==0 ? 1 : 0 );
+		if ( swoo > 0 )
+			return finish_cleanup(swoo ,NULL,NULL,NULL);
+
+		return finish_cleanup( switch_onoff( status==0 ? 0 : 1 ) ,NULL,NULL,NULL);
+
 	} // if ( strchr("rnb",argv[1][0]) != NULL ){
 
 	// From here on out, it must be something about OpenSSH settings themselves, or Kick'Em
 	// we're left with
 	/**
 	set:
-		on [port(s) a0|no|1|yes|- w0|no|1|yes|- u0|no|1|yes|- g0|no|1|yes|- k0|no|1|yes|- l0|no|1|yes|-]
-		off [port(s) a0|no|1|yes|- w0|no|1|yes|- u0|no|1|yes|- g0|no|1|yes|- k0|no|1|yes|- l0|no|1|yes|-]
+		on [port(s) a[0|no|1|yes|-] w[0|no|1|yes|-] u[0|no|1|yes|-] g[0|no|1|yes|-] k[0|no|1|yes|-] l[0|no|1|yes|-]]
+		off [port(s) a[0|no|1|yes|-] w[0|no|1|yes|-] u[0|no|1|yes|-] g[0|no|1|yes|-] k[0|no|1|yes|-] l[0|no|1|yes|-]]
 	get:
 		port [awutglkefrnbv]
 		allowRoot
