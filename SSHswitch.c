@@ -64,6 +64,11 @@
 #include <CoreFoundation/CFNotificationCenter.h>
 #include <CoreFoundation/CFString.h>
 
+
+#include <roothide.h>
+#define ROOT_PATH(cPath) jbroot(cPath)
+#define ROOT_PATH_NS(path) jbroot(path)
+
 /**
  * this one probably isn't included in your everyday iOS SDKs nor ${THEOS}/vendor/include/ by default
  * libproc.h also depends on (found in the /bsd/ subdir):
@@ -104,33 +109,18 @@ static const char * s_logname = " u.blanxd.sshswitch "; // Blanxd.h logging, the
 static uint8_t s_namesize = 20; // with the spaces (without the ending \0)
 #define S_SSHD "sshd"
 #define S_SSHDID "com.openssh." S_SSHD
-#define RL_ROOT "/var/jb" // root directory path. will not be used (stripped from the paths) unless we're rootless.
 
 // file paths
-static const char * rl_root = RL_ROOT;
-static const char * fp_opensshdc = RL_ROOT "/etc/ssh/sshd_config";
-static const char * fp_opensshdp = RL_ROOT "/Library/LaunchDaemons/" S_SSHDID ".plist";
-static const char * const fp_tweakpref = "/var/mobile/Library/Preferences/u.blanxd.sshswitch/prefs";
+static const char * fp_opensshdc = "/etc/ssh/sshd_config";
+static const char * fp_opensshdp = "/Library/LaunchDaemons/" S_SSHDID ".plist";
+static const char * fp_tweakpref = "/var/mobile/Library/Preferences/u.blanxd.sshswitch/prefs";
 // backward compatibility (pre v.1.1.0) prefs files
 static const char * fp_letemling = "/etc/ssh/u.blanxd.sshswitch.letemlinger";
 static const char * fp_evenlockd = "/etc/ssh/u.blanxd.sshswitch.eveniflocked";
 static const char * fp_notonboot = "/etc/ssh/u.blanxd.sshswitch.notonboot";
 static const char * fp_bootastog = "/etc/ssh/u.blanxd.sshswitch.bootastog";
 // program paths
-static const char * pp_launchctl = RL_ROOT "/bin/launchctl"; // default (Ele,u0,Chi,procursus), checkra1n has it in /sbin
-static const char * pp_launchctls = "/sbin/launchctl"; // checkra1n has it in /sbin
-
-// Like in Dopamine 1.1 (https://github.com/opa334/Dopamine/)
-// https://raw.githubusercontent.com/opa334/Dopamine/23ae3723f8c4812d05ac3ad83aa03db53e855359/BaseBin/systemhook/src/common.h
-// But trying to get away with the smallest possible size instead of PATH_MAX (=1024),
-// and only using it if nothing else resolves, once for each of the paths, in main(). See the func paths().
-#define JB_ROOT_PATH(path) ({ \
-  uint16_t len = strlen(rl_root) + strlen(path) + 1; \
-  char *outPath = alloca(len); \
-  strlcpy(outPath, rl_root, len); \
-  strlcat(outPath, path, len); \
-  (outPath); \
-})
+static const char * pp_launchctl = "/bin/launchctl"; // default (Ele,u0,Chi,procursus), checkra1n has it in /sbin, but "Launch Daemon Controller" fixed this
 
 // some repeated stuff
 static const char * const s_pt = "Port ";
@@ -216,41 +206,6 @@ touchremove(int dotouch, const char* pathname){
 			return 3;
 	}
 	return 0;
-}
-
-// paths are dynamic as of v.1.1.0
-static int
-paths() {
-
-	size_t rlen = strlen(rl_root);
-
-	const char * rooted = fp_opensshdc;
-	rooted += rlen;
-
-	_Bool is_rooted = is_file(rooted);
-	_Bool ok_varjb = ( !is_rooted && !is_file(fp_opensshdc) )
-		? 0
-		: 1;
-
-	if ( is_rooted || !ok_varjb ){
-
-		fp_opensshdc += rlen;
-		fp_opensshdp += rlen;
-		pp_launchctl += rlen;
-
-		rl_root = ok_varjb ? "" : getenv("JB_ROOT_PATH");
-
-	}
-
-	if ( !is_file( ok_varjb ? pp_launchctl : JB_ROOT_PATH(pp_launchctl) ) ){
-		// so if cannot find in /bin (Procursus installs it in /usr/bin but makes a link in /bin so it's ok)
-		pp_launchctl = pp_launchctls;
-		if ( !is_file(pp_launchctl) ){
-			return 0;
-		}
-	}
-
-	return ok_varjb ? 1 : 2;
 }
 
 #pragma mark helpers for strings and stuff
@@ -2103,6 +2058,10 @@ long_help(char *argv[]){
 }
 
 int main(int argc, char *argv[], char * envp[]) {
+	fp_opensshdc = ROOT_PATH(fp_opensshdc);
+	fp_opensshdp = ROOT_PATH(fp_opensshdp);
+	fp_tweakpref = ROOT_PATH(fp_tweakpref);
+	pp_launchctl = ROOT_PATH(pp_launchctl);
 
 #pragma mark subcommand -h
 	if ( argc > 1 && strncmp(argv[1],"-h",2)==0 ){
@@ -2182,18 +2141,7 @@ int main(int argc, char *argv[], char * envp[]) {
 		}
 	} // if ( argc > 1 ){
 
-	int status = paths(); // status is the old on/off status, but for a moment here it denotes the success of paths()
-	if ( !status ){
-		bhLog("ERROR: determined %s but it isn't there", pp_launchctl);
-		return 17;
-	} else if ( status>1 ){
-		// ok so not in /var/jb any more, need to use env JB_ROOT_PATH
-		pp_launchctl = JB_ROOT_PATH(pp_launchctl);
-		fp_opensshdp = JB_ROOT_PATH(fp_opensshdp);
-		fp_opensshdc = JB_ROOT_PATH(fp_opensshdc);
-	}
-
-	status = check_status(); // 0:notRunning, 1:running, <0:Error
+	int status = check_status(); // 0:notRunning, 1:running, <0:Error
 	if ( status < 0 ){
 		return -status; // Error 11 or 12
 	}
